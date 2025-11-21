@@ -63,7 +63,7 @@ init_status = {"step": "Starting...", "progress": 0}
 init_lock = threading.Lock()
 
 # UI Controls
-brightness_boost = 40  # Default brightness boost (0-100)
+brightness_boost = 0  # Default brightness boost (0-100) - start at 0, user can adjust
 show_controls = True  # Show/hide UI controls
 auto_brightness_enabled = False  # Auto-adjust brightness based on frame analysis
 last_auto_brightness_time = 0  # Throttle auto-brightness updates
@@ -337,22 +337,17 @@ class CameraThread:
         update_init_status("Configuring camera...", 15)
         time.sleep(1.2)
         
-        # Request high-res
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        # Request high-res for better quality
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         # Reduce buffer to get latest frames
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
-        # Brightness optimization settings (minimal)
+        # Quality settings for laptop webcam - use AUTO settings for best results
         try:
-            # Minimal brightness increase (0.0 to 1.0 scale, 0.4 = 40% brightness)
-            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 0.4)
-            # Enable auto-exposure (0.25 = auto mode, -5 to -1 for various auto modes)
-            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
-            # Set exposure value (negative values for auto, positive for manual)
-            self.cap.set(cv2.CAP_PROP_EXPOSURE, -5)
-            # Minimal gain for low-light sensitivity (0-100 scale)
-            self.cap.set(cv2.CAP_PROP_GAIN, 5)
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Full auto-exposure ON
+            self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)  # Enable autofocus if available
+            # Don't manually set brightness/contrast - let camera auto-adjust
         except Exception:
             # Some cameras may not support all settings
             pass
@@ -813,7 +808,7 @@ def on_brightness_change(val):
     brightness_boost = val
 
 print("\n" + "="*60)
-print("🛡️  DR. STRANGE SHIELDS - OPTIMIZED EXHIBITION MODE 🛡️")
+print("DR. STRANGE SHIELDS - OPTIMIZED EXHIBITION MODE")
 print("="*60)
 print(f"Demo mode: {'ON' if args.demo_mode else 'OFF'}")
 print(f"Prediction every {PRED_EVERY_N_FRAMES} frame(s)")
