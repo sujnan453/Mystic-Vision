@@ -65,6 +65,8 @@ init_lock = threading.Lock()
 # UI Controls
 brightness_boost = 40  # Default brightness boost (0-100)
 show_controls = True  # Show/hide UI controls
+auto_brightness_enabled = False  # Auto-adjust brightness based on frame analysis
+last_auto_brightness_time = 0  # Throttle auto-brightness updates
 
 # Tutorial and Exhibition Mode
 tutorial_enabled = True  # Enable tutorial instructions
@@ -161,6 +163,50 @@ def enhance_frame(frame, boost=40):
     # Add brightness boost - adjustable via UI
     brightened = cv2.convertScaleAbs(frame, alpha=1.0, beta=boost)
     return brightened
+
+
+def analyze_frame_brightness(frame):
+    """Analyze frame and calculate optimal brightness boost"""
+    # Convert to grayscale for analysis
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Calculate average brightness
+    avg_brightness = np.mean(gray)
+    
+    # Calculate histogram to detect dark/bright regions
+    hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+    
+    # Optimal brightness target: 120-140 (mid-range)
+    target_brightness = 130
+    
+    # Calculate needed boost
+    if avg_brightness < 80:  # Very dark
+        optimal_boost = 60
+    elif avg_brightness < 110:  # Dark
+        optimal_boost = 45
+    elif avg_brightness < 140:  # Slightly dark
+        optimal_boost = 30
+    elif avg_brightness < 170:  # Good
+        optimal_boost = 15
+    else:  # Bright
+        optimal_boost = 0
+    
+    return int(optimal_boost)
+
+
+def auto_adjust_brightness(frame):
+    """Automatically adjust brightness based on frame analysis"""
+    global brightness_boost, last_auto_brightness_time
+    
+    current_time = time.time()
+    # Update every 2 seconds to avoid flickering
+    if current_time - last_auto_brightness_time > 2.0:
+        optimal_boost = analyze_frame_brightness(frame)
+        # Smooth transition: move towards optimal gradually
+        brightness_boost = int(0.7 * brightness_boost + 0.3 * optimal_boost)
+        last_auto_brightness_time = current_time
+        return True
+    return False
 
 
 # -------------------- Exhibition UI Functions --------------------
@@ -260,6 +306,7 @@ def draw_help_overlay(frame):
         "5. Make gesture to activate shields!",
         "",
         "KEYBOARD SHORTCUTS:",
+        "A - Toggle Auto-Brightness",
         "H - Toggle this help",
         "G - Toggle shields manually",
         "F - Fullscreen",
@@ -913,6 +960,10 @@ with mp_holistic.Holistic(min_detection_confidence=args.min_detection_confidence
             
             # Apply image enhancement if not disabled
             if not args.no_enhance:
+                # Auto-adjust brightness if enabled
+                if auto_brightness_enabled:
+                    auto_adjust_brightness(frame)
+                
                 frame = enhance_frame(frame, brightness_boost)
                 frame = np.ascontiguousarray(frame)
 
@@ -1198,24 +1249,33 @@ with mp_holistic.Holistic(min_detection_confidence=args.min_detection_confidence
             
             # Display brightness and accuracy indicators
             if show_controls:
-                # Brightness indicator (top left)
-                brightness_text = f"Brightness: {brightness_boost}"
-                cv2.putText(frame, brightness_text, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 100), 2, cv2.LINE_AA)
+                # Auto-brightness button (top left)
+                button_x, button_y, button_w, button_h = 30, 10, 180, 25
+                button_color = (0, 200, 100) if auto_brightness_enabled else (100, 100, 100)
+                cv2.rectangle(frame, (button_x, button_y), (button_x + button_w, button_y + button_h), button_color, -1)
+                cv2.rectangle(frame, (button_x, button_y), (button_x + button_w, button_y + button_h), (200, 200, 200), 2)
+                button_text = "AUTO" if auto_brightness_enabled else "MANUAL"
+                cv2.putText(frame, f"[A] {button_text}", (button_x + 10, button_y + 18), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
                 
-                # Hand detection confidence (top left, below brightness)
+                # Brightness indicator (below button)
+                brightness_text = f"Brightness: {brightness_boost}" + (" (AUTO)" if auto_brightness_enabled else "")
+                cv2.putText(frame, brightness_text, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 100), 2, cv2.LINE_AA)
+                
+                # Hand detection confidence (below brightness)
                 if xMinL and xMinR:
                     conf_text = f"Detection: {int(pred_prob * 100)}%"
                     conf_color = (0, 255, 0) if pred_prob > 0.7 else (0, 200, 255) if pred_prob > 0.5 else (0, 100, 255)
-                    cv2.putText(frame, conf_text, (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, conf_color, 2, cv2.LINE_AA)
+                    cv2.putText(frame, conf_text, (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, conf_color, 2, cv2.LINE_AA)
                     
                     # Accuracy bar
-                    bar_x, bar_y, bar_w, bar_h = 30, 85, 200, 15
+                    bar_x, bar_y, bar_w, bar_h = 30, 90, 200, 15
                     cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (80, 80, 80), -1)
                     fill_w = int(bar_w * pred_prob)
                     cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h), conf_color, -1)
                     cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (200, 200, 200), 1)
                 else:
-                    cv2.putText(frame, "Detection: No hands", (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 100), 2, cv2.LINE_AA)
+                    cv2.putText(frame, "Detection: No hands", (30, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 100), 2, cv2.LINE_AA)
             
             # Exhibition Mode: Tutorial and Instructions
             if tutorial_enabled and not SHIELDS:
@@ -1256,7 +1316,11 @@ with mp_holistic.Holistic(min_detection_confidence=args.min_detection_confidence
                 cv2.imshow('Dr. Strange shields', frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key != 255:
-                    if key == ord('h') or key == ord('H'):
+                    if key == ord('a') or key == ord('A'):
+                        auto_brightness_enabled = not auto_brightness_enabled
+                        if auto_brightness_enabled:
+                            last_auto_brightness_time = 0  # Force immediate update
+                    elif key == ord('h') or key == ord('H'):
                         show_help_overlay = not show_help_overlay
                     elif key == ord('g'):
                         SHIELDS = not SHIELDS
