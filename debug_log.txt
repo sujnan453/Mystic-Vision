@@ -1,0 +1,3 @@
+DEBUG: Starting main loop
+DEBUG: Exception: 'NoneType' object has no attribute 'left_hand_landmarks'
+DEBUG: Entering finally block

@@ -67,27 +67,18 @@ def draw_limit_rh(image, results):
         cv2.line(image, (int(xMax*w), int(yMin*h)), (int(xMax*w)-int((xMax*w-xMin*w)/5), int(yMin*h)), (255,0,0),8)
         cv2.putText(image, 'Right Hand',(int(xMin*w), int(yMin*h-(yMax*h-yMin*h)/20)), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,0,0), 2)
 
-def get_center_lh(image, results):
-    if results.left_hand_landmarks:
-        xMax = max([i.x for i in results.left_hand_landmarks.landmark])
-        xMin = min([i.x for i in results.left_hand_landmarks.landmark])
-        yMax = max([i.y for i in results.left_hand_landmarks.landmark])
-        yMin = min([i.y for i in results.left_hand_landmarks.landmark])
 
-        return xMin, xMax, yMin, yMax
-    else:
-        return None, None, None, None
 
-def get_center_rh(image, results):
-    if results.right_hand_landmarks:
-        xMax = max([i.x for i in results.right_hand_landmarks.landmark])
-        xMin = min([i.x for i in results.right_hand_landmarks.landmark])
-        yMax = max([i.y for i in results.right_hand_landmarks.landmark])
-        yMin = min([i.y for i in results.right_hand_landmarks.landmark])
+def get_hand_center(hand_landmarks):
+    """Calculate the center point of a hand from MediaPipe hand landmarks"""
+    if hand_landmarks:
+        x_coords = [landmark.x for landmark in hand_landmarks.landmark]
+        y_coords = [landmark.y for landmark in hand_landmarks.landmark]
+        center_x = sum(x_coords) / len(x_coords)
+        center_y = sum(y_coords) / len(y_coords)
+        return (center_x, center_y)
+    return None
 
-        return xMin, xMax, yMin, yMax
-    else:
-        return None, None, None, None
 
 def draw_limit_lh(image, results):
     if results.left_hand_landmarks:
