@@ -1,61 +1,52 @@
-# shield.py - OPTIMIZED VERSION WITH LOADING UI (COMPLETE FIXED VERSION)
-# Dr. Strange shields — smoother, lag-free exhibition version with startup UI
-
 import cv2
 import time
 import mediapipe as mp
 import numpy as np
 import os
-from utils import mediapipe_detection, get_center_lh, get_center_rh, points_detection, points_detection_hands
-from argparse import ArgumentParser
-import pickle
-from datetime import datetime, timedelta
-import pyvirtualcam
-from pyvirtualcam import PixelFormat
-import signal
 import sys
+import signal
 import threading
 import queue
 from collections import deque
+from argparse import ArgumentParser
+import pickle
+from datetime import datetime
+try:
+    import pyvirtualcam
+    from pyvirtualcam import PixelFormat
+except ImportError:
+    pyvirtualcam = None
+    PixelFormat = None
 
+try:
+    from procedural_effects import RealisticFireShield
+    procedural_effects = {"RealisticFireShield": RealisticFireShield}
+except ImportError:
+    procedural_effects = {}
 
-# ----------------- Arguments ----------------- #
-parser = ArgumentParser()
-parser.add_argument("-m", "--model", dest="ML_model", default='models/model_svm.sav',
-                    help="PATH of model FILE.", metavar="FILE")
-parser.add_argument("-t", "--threshold", dest="threshold_prediction", default=0.9, type=float,
-                    help="Threshold for prediction. A number between 0 and 1. default is 0.5")
-parser.add_argument("-dc", "--det_conf", dest="min_detection_confidence", default=0.4, type=float,
-                    help="Lower threshold for better detection of kids' hands")
-parser.add_argument("-tc", "--trk_conf", dest="min_tracking_confidence", default=0.5, type=float)
-parser.add_argument("-c", "--camera_id", dest="camera", default=0, type=int)
-parser.add_argument("-s", "--shield", dest="shield_video", default='effects/shield.mp4')
-parser.add_argument("-o", "--output", dest="output_mode", default='both',
-                    choices=['window', 'virtual', 'both'])
-parser.add_argument("--start_fullscreen", dest="start_fullscreen", action="store_true")
-parser.add_argument("--demo", dest="demo_mode", action="store_true",
-                    help="Enable demo/easy mode for kids (looser thresholds & longer windows)")
-parser.add_argument("--pred_skip", dest="pred_every_n", default=2, type=int,
-                    help="Run prediction every N frames (1 = every frame, 2 = every 2nd frame...)")
-parser.add_argument("--mirror", dest="mirror", action="store_true",
-                    help="Mirror camera horizontally. Default is OFF (no mirroring).")
-parser.add_argument("--max_hands", dest="max_hands", default=6, type=int,
-                    help="Maximum number of hands to track.")
-parser.add_argument("--preload", dest="preload_count", default=3, type=int,
-                    help="Number of effect files to preload at startup.")
-parser.add_argument("--buffer_secs", dest="buffer_seconds", default=3.0, type=float,
-                    help="Seconds of animation to prebuffer per effect loader.")
-parser.add_argument("--mp_skip", dest="mp_every_n", default=1, type=int,
-                    help="Run MediaPipe detection every N frames.")
-parser.add_argument("--no_enhance", dest="no_enhance", action="store_true",
-                    help="Disable image enhancement (brightness/contrast). Default is enhancement ON.")
-args = parser.parse_args()
-# --------------------------------------------- #
+from utils import get_hand_center
+from utils import get_hand_center, points_detection_hands
+from datetime import datetime, timedelta
 
+# Helper to get the current shield frame (procedural or video)
+def get_shield_frame(name):
+    """Return the current shield frame and a status flag. If using procedural, call the effect; if video, get from loader."""
+    if name in procedural_effects:
+        try:
+            frame = procedural_effects[name].render()
+            return frame, True
+        except Exception:
+            return None, False
+    elif 'shield_loaders' in globals() and name in shield_loaders:
+        loader = shield_loaders[name]
+        if loader.ready:
+            frame = loader.get_frame()
+            return frame, True
+        else:
+            return None, False
+    else:
+        return None, False
 
-# Globals for cleanup
-cap = None
-cam = None
 show_window = False
 stop_threads = False
 initialization_complete = False
@@ -63,9 +54,9 @@ init_status = {"step": "Starting...", "progress": 0}
 init_lock = threading.Lock()
 
 # UI Controls
-brightness_boost = 0  # Default brightness boost (0-100) - start at 0, user can adjust
+brightness_boost = 20  # Default brightness boost (0-100) - start at 20 for better visibility
 show_controls = True  # Show/hide UI controls
-auto_brightness_enabled = False  # Auto-adjust brightness based on frame analysis
+auto_brightness_enabled = True  # Auto-adjust brightness based on frame analysis (ENABLED BY DEFAULT)
 last_auto_brightness_time = 0  # Throttle auto-brightness updates
 
 # Tutorial and Exhibition Mode
@@ -75,15 +66,34 @@ last_activity_time = None  # Track user activity
 AUTO_RESET_SECONDS = 30  # Auto-reset after inactivity
 session_state = "WELCOME"  # WELCOME, DETECTING, ACTIVE, SUCCESS
 
+# Auto-Switching Configuration
+AUTO_SWITCH_ENABLED = True
+EFFECT_CYCLE_DURATION = 5   # Switch every 5 seconds of activity
+COUNTDOWN_DURATION = 5      # Show countdown for full duration
+shield_active_start_time = None
+
 
 def signal_handler(sig, frame):
     global stop_threads
     print("\n\n" + "="*60 + "\n🛑 Interruption received (Ctrl+C)\n🧹 Cleaning resources...")
     stop_threads = True
-    for obj in [cap, cam] + list(shield_loaders.values()):
+    # Only release resources that exist
+    objs = []
+    if 'camera_thread' in globals():
+        objs.append(camera_thread)
+    if 'cam' in globals() and cam is not None:
+        objs.append(cam)
+    objs += list(shield_loaders.values()) if 'shield_loaders' in globals() else []
+    for obj in objs:
         try:
-            obj.release() if hasattr(obj, 'release') else (obj.close() if hasattr(obj, 'close') else obj.stop())
-        except: pass
+            if hasattr(obj, 'release'):
+                obj.release()
+            elif hasattr(obj, 'close'):
+                obj.close()
+            elif hasattr(obj, 'stop'):
+                obj.stop()
+        except Exception:
+            pass
     try:
         if show_window: cv2.destroyAllWindows()
     except: pass
@@ -92,6 +102,27 @@ def signal_handler(sig, frame):
 
 
 signal.signal(signal.SIGINT, signal_handler)
+
+
+# -------------------- Argument Parsing --------------------
+parser = ArgumentParser(description="Dr. Strange Shields - Exhibition Mode")
+parser.add_argument('--camera', type=int, default=0, help='Camera index (default: 0)')
+parser.add_argument('--ML_model', type=str, default='model_svm.sav', help='Path to ML model file')
+parser.add_argument('--shield_video', type=str, default='effects/mandala.mp4', help='Path to shield video or effect')
+parser.add_argument('--output_mode', type=str, default='window', choices=['window', 'virtual', 'both'], help='Output mode: window, virtual, or both')
+parser.add_argument('--demo_mode', action='store_true', help='Enable demo mode (easier for kids)')
+parser.add_argument('--mirror', action='store_false', help='Do not mirror camera image (default: no mirror)')
+parser.add_argument('--buffer_seconds', type=float, default=2.0, help='Buffer seconds for video effects')
+parser.add_argument('--preload_count', type=int, default=2, help='Number of effects to preload')
+parser.add_argument('--start_fullscreen', action='store_true', help='Start in fullscreen mode')
+parser.add_argument('--gesture_mode', action='store_true', help='Enable gesture mode (require gestures to activate shields)')
+parser.add_argument('--no_enhance', action='store_true', help='Disable image enhancement')
+parser.add_argument('--pred_every_n', type=int, default=2, help='Predict every N frames')
+parser.add_argument('--mp_every_n', type=int, default=2, help='Run MediaPipe every N frames')
+parser.add_argument('--min_detection_confidence', type=float, default=0.7, help='MediaPipe min detection confidence')
+parser.add_argument('--min_tracking_confidence', type=float, default=0.6, help='MediaPipe min tracking confidence')
+parser.add_argument('--max_hands', type=int, default=6, help='Maximum number of hands to detect')
+args = parser.parse_args()
 
 current_directory = os.path.dirname(os.path.realpath(__file__)).replace("\\", "/")
 
@@ -327,6 +358,126 @@ def draw_help_overlay(frame):
     return frame
 
 
+    return frame
+
+
+def get_effect_duration(filename):
+    """Return the duration for a specific effect file - ALL 8 seconds"""
+    # All effects now have 8 second duration
+    return 8
+
+
+def draw_countdown_headline(frame, seconds_left, total_duration=5):
+    """Draw a smooth, aesthetic countdown with clean design"""
+    h, w = frame.shape[:2]
+    
+    # Calculate progress and smooth animations
+    progress = (total_duration - seconds_left) / total_duration
+    t = time.time()
+    
+    # Sleek bar dimensions
+    bar_h = 70
+    y = 10
+    margin_x = int(w * 0.15)  # 15% margin on each side
+    bar_w = w - (margin_x * 2)
+    
+    # Smooth pulsing effect
+    pulse = (np.sin(t * 2) + 1) / 2 * 0.3 + 0.7  # Range: 0.7 to 1.0
+    
+    # Create semi-transparent background with subtle gradient
+    overlay = frame.copy()
+    
+    # Gradient from dark to slightly lighter
+    for i in range(bar_h):
+        alpha_gradient = 0.85 - (i / bar_h) * 0.2
+        gray_val = int(15 + (i / bar_h) * 10)
+        cv2.line(overlay, (margin_x, y + i), (margin_x + bar_w, y + i), 
+                (gray_val, gray_val, gray_val), 1)
+    
+    cv2.addWeighted(overlay, 0.9, frame, 0.1, 0, frame)
+    
+    # Smooth progress bar with gradient
+    progress_w = int(bar_w * progress)
+    progress_h = 4
+    progress_y = y + bar_h - 15
+    
+    if progress_w > 0:
+        # Create gradient progress bar
+        for i in range(progress_w):
+            ratio = i / max(1, progress_w)
+            
+            # Smooth color transition: Cyan → Blue → Purple
+            if ratio < 0.5:
+                # Cyan to Blue
+                r_val = int(255 * (ratio * 2))
+                g_val = int(255 * (1 - ratio))
+                b_val = 255
+            else:
+                # Blue to Purple
+                r_val = int(255 * (0.5 + (ratio - 0.5)))
+                g_val = int(128 * (1 - (ratio - 0.5) * 2))
+                b_val = 255
+            
+            # Apply pulse
+            r_val = int(r_val * pulse)
+            g_val = int(g_val * pulse)
+            b_val = int(b_val * pulse)
+            
+            cv2.line(frame, (margin_x + i, progress_y), 
+                    (margin_x + i, progress_y + progress_h), 
+                    (b_val, g_val, r_val), 1)
+        
+        # Subtle glow on progress bar
+        glow = frame.copy()
+        cv2.line(glow, (margin_x, progress_y + progress_h // 2), 
+                (margin_x + progress_w, progress_y + progress_h // 2), 
+                (255, 255, 255), 2)
+        cv2.addWeighted(glow, 0.15, frame, 0.85, 0, frame)
+    
+    # Clean, elegant text
+    text = f"NEXT SPELL: {int(seconds_left)}s"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    
+    # Subtle scale animation
+    if seconds_left <= 3:
+        scale_pulse = (np.sin(t * 6) + 1) / 2 * 0.15 + 0.85
+        scale = 0.9 * scale_pulse
+        thick = 2
+    else:
+        scale = 0.75
+        thick = 2
+    
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
+    tx = margin_x + (bar_w - tw) // 2
+    ty = y + 35
+    
+    # Smooth color transitions
+    if seconds_left <= 3:
+        # Urgent: Soft red
+        text_color = (100, 100, 255)
+    elif seconds_left <= 5:
+        # Warning: Soft purple
+        text_color = (200, 150, 255)
+    else:
+        # Normal: Soft cyan
+        text_color = (255, 200, 150)
+    
+    # Subtle text shadow for depth
+    shadow_offset = 2
+    cv2.putText(frame, text, (tx + shadow_offset, ty + shadow_offset), 
+               font, scale, (0, 0, 0), thick, cv2.LINE_AA)
+    
+    # Main text
+    cv2.putText(frame, text, (tx, ty), font, scale, text_color, thick, cv2.LINE_AA)
+    
+    # Minimalist border
+    border_color = (80, 80, 100)
+    cv2.rectangle(frame, (margin_x, y), (margin_x + bar_w, y + bar_h), 
+                 border_color, 1, cv2.LINE_AA)
+    
+    return frame
+
+
 # -------------------- Camera Capture Thread --------------------
 class CameraThread:
     """Dedicated thread for camera capture to prevent blocking"""
@@ -405,6 +556,16 @@ camera_thread.start()
 width = camera_thread.width
 height = camera_thread.height
 
+
+# Define procedural effects list only if RealisticFireShield is available
+effects_list = []
+if 'RealisticFireShield' in globals() and RealisticFireShield is not None:
+    effects_list.append(('Fire Shield', RealisticFireShield))
+
+# Initialize procedural effects now that we have dimensions
+for name, EffectClass in effects_list:
+    procedural_effects[name] = EffectClass(width, height)
+
 update_init_status("Loading ML model...", 30)
 
 # Load model
@@ -440,17 +601,22 @@ KEY_3 = False
 SHIELDS = False
 
 scale = 1.5
-mp_holistic = mp.solutions.holistic
+scale = 1.5
+mp_hands = mp.solutions.hands
+mp_holistic = mp.solutions.holistic  # Keep for drawing utils compatibility if needed
 
 update_init_status("Loading effects...", 45)
 
-# EFFECTS folder
+# PROCEDURAL EFFECTS - No video files needed!
 effects_folder = os.path.join(current_directory, 'effects')
 video_exts = ('.mp4', '.mov', '.webm', '.avi', '.mkv')
 
-
 def list_effects_files():
-    return sorted([f for f in os.listdir(effects_folder) if f.lower().endswith(video_exts)]) if os.path.isdir(effects_folder) else []
+    # Check for video files (backward compatibility)
+    video_files = sorted([f for f in os.listdir(effects_folder) if f.lower().endswith(video_exts)]) if os.path.isdir(effects_folder) else []
+    # Add procedural effect names
+    procedural_names = [name for name, _ in effects_list]
+    return procedural_names + video_files
 
 
 effects_files = list_effects_files()
@@ -458,7 +624,7 @@ effects_files = list_effects_files()
 shield_path = args.shield_video
 if not os.path.isabs(shield_path):
     shield_path = os.path.join(current_directory, shield_path)
-shield_loaded_name = os.path.basename(shield_path) if os.path.exists(shield_path) else (effects_files[0] if effects_files else None)
+shield_loaded_name = effects_files[0] if effects_files else 'Rotating Mandala'
 
 shield = None
 
@@ -705,28 +871,6 @@ if shield_loaded_name and os.path.basename(shield_loaded_name) in effects_files:
 update_init_status("Finalizing setup...", 90)
 
 
-def get_shield_frame(selected_name):
-    if not selected_name:
-        return None, False
-    
-    loader = shield_loaders.get(selected_name)
-    if loader:
-        f = loader.get_frame()
-        return (f, True) if f is not None else (loader.last_frame, True) if loader.last_frame else (None, False)
-    
-    fp = selected_name if os.path.isabs(selected_name) else os.path.join(effects_folder, selected_name)
-    if os.path.exists(fp):
-        try:
-            cap_tmp = cv2.VideoCapture(fp)
-            ret, f = cap_tmp.read()
-            cap_tmp.release()
-            if ret and f is not None:
-                return np.ascontiguousarray(f), True
-        except: pass
-    
-    return np.zeros((int(height*0.2), int(width*0.2), 3), dtype=np.uint8), False
-
-
 # -------------------- Inference worker --------------------
 def inference_worker():
     global stop_threads, latest_prediction, latest_pred_prob
@@ -903,7 +1047,6 @@ update_init_status("Ready!", 100)
 # Final loading screen
 if show_window:
     final_loading = create_loading_screen(width, height, "System Ready", 100)
-    cv2.imshow("Dr. Strange shields", final_loading)
     cv2.waitKey(500)
 
 initialization_complete = True
@@ -917,12 +1060,14 @@ target_fps = 60
 frame_time = 1.0 / target_fps
 last_frame_time = time.time()
 
-with mp_holistic.Holistic(min_detection_confidence=args.min_detection_confidence,
-                          min_tracking_confidence=args.min_tracking_confidence,
-                          model_complexity=0,  # Fast model for real-time
-                          smooth_landmarks=True,  # Smooth hand movements
-                          enable_segmentation=False,  # Disable for speed
-                          refine_face_landmarks=False) as holistic:  # Disable for speed
+
+# --- Improved MediaPipe Hands configuration for accuracy ---
+with mp_hands.Hands(
+    min_detection_confidence=0.8,  # Higher confidence for accuracy
+    min_tracking_confidence=0.8,   # Higher tracking confidence
+    model_complexity=1,
+    max_num_hands=args.max_hands
+) as hands:
 
     if use_virtual_cam:
         cam = pyvirtualcam.Camera(width, height, target_fps, fmt=PixelFormat.BGR)
@@ -972,27 +1117,145 @@ with mp_holistic.Holistic(min_detection_confidence=args.min_detection_confidence
             else:
                 frame_shield = np.ascontiguousarray(frame_shield)
 
-            if _mp_frame_count >= MP_EVERY_N_FRAMES:
-                frame_after_mp, results = mediapipe_detection(frame, holistic)
-                frame = np.ascontiguousarray(frame_after_mp)
+            if _mp_frame_count >= MP_EVERY_N_FRAMES or cached_mp_results is None:
+                # Use Hands model instead of Holistic
+                frame.flags.writeable = False
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = hands.process(frame_rgb)
+                frame.flags.writeable = True
+                
                 cached_mp_results = results
                 cached_mp_frame = frame.copy()
                 _mp_frame_count = 0
             else:
                 results = cached_mp_results
 
-            xMinL, xMaxL, yMinL, yMaxL = get_center_lh(frame, results)
-            xMinR, xMaxR, yMinR, yMaxR = get_center_rh(frame, results)
+            # --- Improved smoothing for hand centers using exponential moving average ---
+            SMOOTHING_FACTOR = 0.7
+            if not hasattr(globals(), 'smoothed_hand_centers'):
+                smoothed_hand_centers = {}
+            else:
+                smoothed_hand_centers = globals().get('smoothed_hand_centers', {})
 
+            hand_centers = []
+            if results and results.multi_hand_landmarks:
+                for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                    x_list = [landmark.x for landmark in hand_landmarks.landmark]
+                    y_list = [landmark.y for landmark in hand_landmarks.landmark]
+                    xMin = min(x_list)
+                    xMax = max(x_list)
+                    yMin = min(y_list)
+                    yMax = max(y_list)
+
+                    # Smoothing: use exponential moving average for center
+                    center_x = (xMax + xMin) / 2
+                    center_y = (yMax + yMin) / 2
+                    hand_id = f"hand_{idx}"
+                    prev = smoothed_hand_centers.get(hand_id, (center_x, center_y, xMin, xMax, yMin, yMax))
+                    smooth_x = SMOOTHING_FACTOR * prev[0] + (1 - SMOOTHING_FACTOR) * center_x
+                    smooth_y = SMOOTHING_FACTOR * prev[1] + (1 - SMOOTHING_FACTOR) * center_y
+                    smooth_xMin = SMOOTHING_FACTOR * prev[2] + (1 - SMOOTHING_FACTOR) * xMin
+                    smooth_xMax = SMOOTHING_FACTOR * prev[3] + (1 - SMOOTHING_FACTOR) * xMax
+                    smooth_yMin = SMOOTHING_FACTOR * prev[4] + (1 - SMOOTHING_FACTOR) * yMin
+                    smooth_yMax = SMOOTHING_FACTOR * prev[5] + (1 - SMOOTHING_FACTOR) * yMax
+                    smoothed_hand_centers[hand_id] = (smooth_x, smooth_y, smooth_xMin, smooth_xMax, smooth_yMin, smooth_yMax)
+                    hand_centers.append((smooth_xMin, smooth_xMax, smooth_yMin, smooth_yMax, hand_landmarks))
+
+                # Always render shields for all detected hands
+                if SHIELDS:
+                    for idx, (smooth_xMin, smooth_xMax, smooth_yMin, smooth_yMax, hand_landmarks) in enumerate(hand_centers):
+                        hand_id = f"hand_{idx}"
+                        smooth_x, smooth_y = smoothed_hand_centers[hand_id][0], smoothed_hand_centers[hand_id][1]
+                        xc = int(width * smooth_x)
+                        yc = int(height * smooth_y)
+                        w_shield = int(width * (smooth_xMax - smooth_xMin) / 2 * 3.5 * scale)
+                        h_shield = int(height * (smooth_yMax - smooth_yMin) / 2 * 2 * scale)
+                        if w_shield > 0 and h_shield > 0:
+                            res_hand = cv2.resize(res, (max(1, w_shield * 2), max(1, h_shield * 2)), interpolation=cv2.INTER_CUBIC)
+                            start_h = 0; start_w = 0
+                            stop_h = h_shield * 2; stop_w = w_shield * 2
+                            f_start_h = yc - h_shield; f_stop_h = yc + h_shield
+                            f_start_w = xc - w_shield; f_stop_w = xc + w_shield
+                            if f_start_h < 0:
+                                start_h = -f_start_h; f_start_h = 0
+                            if f_stop_h > height:
+                                stop_h = stop_h - (f_stop_h - height); f_stop_h = height
+                            if f_start_w < 0:
+                                start_w = -f_start_w; f_start_w = 0
+                            if f_stop_w > width:
+                                stop_w = stop_w - (f_stop_w - width); f_stop_w = width
+                            if stop_h > start_h and stop_w > start_w:
+                                res_hand = res_hand[start_h:stop_h, start_w:stop_w, :]
+                                try:
+                                    bg = frame[f_start_h:f_stop_h, f_start_w:f_stop_w]
+                                    blended = cv2.addWeighted(bg, alpha, res_hand, 1, 0)
+                                    frame[f_start_h:f_stop_h, f_start_w:f_stop_w] = blended
+                                except Exception:
+                                    pass
+            # Store smoothing state globally
+            globals()['smoothed_hand_centers'] = smoothed_hand_centers
+
+            # Gesture Logic - Only run if exactly 2 hands detected (to match model)
+            xMinL, xMaxL, yMinL, yMaxL = None, None, None, None
+            xMinR, xMaxR, yMinR, yMaxR = None, None, None, None
+            
+            if len(hand_centers) == 2:
+                # Sort by x-coordinate to guess Left vs Right (mirror mode affects this)
+                # In mirror mode (default for webcam), left side of screen is right hand
+                h1 = hand_centers[0]
+                h2 = hand_centers[1]
+                
+                if h1[0] < h2[0]: # h1 is on left side of screen
+                    # In mirror mode, left side of screen = Right Hand
+                    # In normal mode, left side of screen = Right Hand (from camera POV)
+                    # Let's assume standard webcam mirroring
+                    xMinR, xMaxR, yMinR, yMaxR, lmR = h1
+                    xMinL, xMaxL, yMinL, yMaxL, lmL = h2
+                else:
+                    xMinL, xMaxL, yMinL, yMaxL, lmL = h1
+                    xMinR, xMaxR, yMinR, yMaxR, lmR = h2
+            
+            # Update legacy variables for compatibility
+            # (These are used in the rest of the code for status display etc)
+            # Note: We only set these if exactly 2 hands are found
+            
             mask = cv2.inRange(frame_shield, black_screen, black_screen)
             res = cv2.bitwise_and(frame_shield, frame_shield, mask=mask)
             res = frame_shield - res
             alpha = 1
 
             do_predict_this_frame = (_frame_count % PRED_EVERY_N_FRAMES == 0)
+            
+            # Only run prediction if we have exactly 2 hands (Left and Right)
             if xMinL and xMinR and do_predict_this_frame:
                 try:
-                    feats_arr = np.array([points_detection_hands(results)])
+                    # Construct input vector manually from the 2 hands
+                    # The model expects 63 points (21*3) for Right Hand + 63 points for Left Hand
+                    # We need to normalize them exactly as points_detection_hands did
+                    
+                    # Calculate global min/max for normalization
+                    xMin = min(xMinL, xMinR)
+                    xMax = max(xMaxL, xMaxR)
+                    yMin = min(yMinL, yMinR)
+                    yMax = max(yMaxL, yMaxR)
+                    
+                    # Extract and normalize Right Hand
+                    rh = np.array([[p.x, p.y, p.z] for p in lmR.landmark]).flatten()
+                    for i in np.arange(0, 63, 3):
+                        rh[i] = (rh[i] - xMin) / (xMax - xMin)
+                    for i in np.arange(1, 63, 3):
+                        rh[i] = (rh[i] - yMin) / (yMax - yMin)
+                        
+                    # Extract and normalize Left Hand
+                    lh = np.array([[p.x, p.y, p.z] for p in lmL.landmark]).flatten()
+                    for i in np.arange(0, 63, 3):
+                        lh[i] = (lh[i] - xMin) / (xMax - xMin)
+                    for i in np.arange(1, 63, 3):
+                        lh[i] = (lh[i] - yMin) / (yMax - yMin)
+                        
+                    # Concatenate (Right then Left, based on utils.py)
+                    feats_arr = np.array([np.concatenate((rh, lh))])
+                    
                     try:
                         features_q.put_nowait(feats_arr)
                     except queue.Full:
@@ -1006,6 +1269,14 @@ with mp_holistic.Holistic(min_detection_confidence=args.min_detection_confidence
                             pass
                 except Exception:
                     pass
+            
+            # If we have > 0 hands but not exactly 2, we still want shields in Auto Mode
+            # But we can't run gesture prediction
+            if len(hand_centers) > 0 and len(hand_centers) != 2:
+                 # In Auto Mode, just keep shields on if they are already on, or turn them on
+                 if not args.gesture_mode:
+                     SHIELDS = True
+                 # In Gesture Mode, we can't detect gestures with != 2 hands, so do nothing (maintain state)
 
             with pred_lock:
                 prediction = latest_prediction
@@ -1062,170 +1333,90 @@ with mp_holistic.Holistic(min_detection_confidence=args.min_detection_confidence
                 portal_active_prev = False
                 portal_scale = 0.0
 
-            if SHIELDS and xMinL:
-                xc_lh = int(width * ((xMaxL + xMinL) / 2))
-                yc_lh = int(height * ((yMaxL + yMinL) / 2))
-                l_width_shield = int(width * (xMaxL - xMinL) / 2 * 3.5 * scale)
-                l_height_shield = int(height * (yMaxL - yMinL) / 2 * 2 * scale)
-                if l_width_shield > 0 and l_height_shield > 0:
-                    # Use INTER_CUBIC for smoother shield animation
-                    res2 = cv2.resize(res, (max(1, l_width_shield * 2), max(1, l_height_shield * 2)), 
-                                     interpolation=cv2.INTER_CUBIC)
-                    start_h = 0; start_w = 0
-                    stop_h = l_height_shield * 2; stop_w = l_width_shield * 2
-                    f_start_h = yc_lh - l_height_shield; f_stop_h = yc_lh + l_height_shield
-                    f_start_w = xc_lh - l_width_shield; f_stop_w = xc_lh + l_width_shield
-                    
-                    if f_start_h < 0:
-                        start_h = -f_start_h; f_start_h = 0
-                    if f_stop_h > height:
-                        stop_h = stop_h - (f_stop_h - height); f_stop_h = height
-                    if f_start_w < 0:
-                        start_w = -f_start_w; f_start_w = 0
-                    if f_stop_w > width:
-                        stop_w = stop_w - (f_stop_w - width); f_stop_w = width
-                    
-                    if stop_h > start_h and stop_w > start_w:
-                        res2 = res2[start_h:stop_h, start_w:stop_w, :]
-                        try:
-                            bg = frame[f_start_h:f_stop_h, f_start_w:f_stop_w]
-                            blended = cv2.addWeighted(bg, alpha, res2, 1, 0)
-                            frame[f_start_h:f_stop_h, f_start_w:f_stop_w] = blended
-                        except Exception:
-                            frame[f_start_h:f_stop_h, f_start_w:f_stop_w] = res2[:f_stop_h-f_start_h, :f_stop_w-f_start_w]
+            # Old shield rendering logic removed (replaced by multi-hand loop above)
 
-            if SHIELDS and xMinR:
-                xc_rh = int(width * ((xMaxR + xMinR) / 2))
-                yc_rh = int(height * ((yMaxR + yMinR) / 2))
-                r_width_shield = int(width * (xMaxR - xMinR) / 2 * 3.5 * scale)
-                r_height_shield = int(height * (yMaxR - yMinR) / 2 * 2 * scale)
-                if r_width_shield > 0 and r_height_shield > 0:
-                    # Use INTER_CUBIC for smoother shield animation
-                    res3 = cv2.resize(res, (max(1, r_width_shield * 2), max(1, r_height_shield * 2)),
-                                     interpolation=cv2.INTER_CUBIC)
-                    start_h = 0; start_w = 0
-                    stop_h = r_height_shield * 2; stop_w = r_width_shield * 2
-                    f_start_h = yc_rh - r_height_shield; f_stop_h = yc_rh + r_height_shield
-                    f_start_w = xc_rh - r_width_shield; f_stop_w = xc_rh + r_width_shield
-                    
-                    if f_start_h < 0:
-                        start_h = -f_start_h; f_start_h = 0
-                    if f_stop_h > height:
-                        stop_h = stop_h - (f_stop_h - height); f_stop_h = height
-                    if f_start_w < 0:
-                        start_w = -f_start_w; f_start_w = 0
-                    if f_stop_w > width:
-                        stop_w = stop_w - (f_stop_w - width); f_stop_w = width
-                    
-                    if stop_h > start_h and stop_w > start_w:
-                        res3 = res3[start_h:stop_h, start_w:stop_w, :]
-                        try:
-                            bg = frame[f_start_h:f_stop_h, f_start_w:f_stop_w]
-                            blended = cv2.addWeighted(bg, alpha, res3, 1, 0)
-                            frame[f_start_h:f_stop_h, f_start_w:f_stop_w] = blended
-                        except Exception:
-                            frame[f_start_h:f_stop_h, f_start_w:f_stop_w] = res3[:f_stop_h-f_start_h, :f_stop_w-f_start_w]
-
-            if xMinL and xMinR:
+            if len(hand_centers) > 0:
                 use_pred = prediction
                 use_prob = pred_prob
-                if use_pred is None:
-                    try:
-                        arr = np.array([points_detection_hands(results)])
-                        use_pred = model.predict(arr)[0]
-                        use_prob = float(np.max(model.predict_proba(arr)))
-                    except Exception:
-                        use_pred = None
-                        use_prob = 0.0
+                
+                # Only use prediction if we have exactly 2 hands (otherwise model is invalid)
+                if len(hand_centers) != 2:
+                    use_pred = None
+                    use_prob = 0.0
                 
                 if SHIELDS:
+                    # Check for deactivation gesture (key_4) - only if 2 hands
                     if (use_pred == 'key_4') and (use_prob > PRED_CONF_THRESHOLD):
                         KEY_1 = False; KEY_3 = False; SHIELDS = False
                         _recent_preds = []
                 else:
-                    if (use_pred == 'key_1') and (use_prob > PRED_CONF_THRESHOLD):
-                        t1 = datetime.now()
-                        KEY_1 = True
-                        _recent_preds = []
-                        if xMinL:
-                            xc_lh = int(width * ((xMaxL + xMinL) / 2))
-                            yc_lh = int(height * ((yMaxL + yMinL) / 2))
-                            key1_display_until = datetime.now() + timedelta(seconds=KEY1_DISPLAY_DURATION)
-                            key1_last_pos = (xc_lh, yc_lh)
-                    elif KEY_1:
-                        is_key3_frame = (use_pred == 'key_3') and (use_prob > PRED_CONF_THRESHOLD)
-                        _recent_preds.append(1 if is_key3_frame else 0)
-                        if len(_recent_preds) > KEY3_WINDOW_FRAMES:
-                            _recent_preds.pop(0)
-                        key3_pos_count = sum(_recent_preds)
-                        if t1 is not None and (t1 + timedelta(seconds=KEY_SEQUENCE_TIME) >= datetime.now()):
-                            if key3_pos_count >= KEY3_REQUIRED_IN_WINDOW:
-                                KEY_3 = True
-                                SHIELDS = True
+                    # GESTURE MODE: Require key_1 + key_3 gesture sequence
+                    if args.gesture_mode:
+                        if (use_pred == 'key_1') and (use_prob > PRED_CONF_THRESHOLD):
+                            t1 = datetime.now()
+                            KEY_1 = True
+                            _recent_preds = []
+                            if xMinL:
+                                xc_lh = int(width * ((xMaxL + xMinL) / 2))
+                                yc_lh = int(height * ((yMaxL + yMinL) / 2))
+                                key1_display_until = datetime.now() + timedelta(seconds=KEY1_DISPLAY_DURATION)
+                                key1_last_pos = (xc_lh, yc_lh)
+                        elif KEY_1:
+                            is_key3_frame = (use_pred == 'key_3') and (use_prob > PRED_CONF_THRESHOLD)
+                            _recent_preds.append(1 if is_key3_frame else 0)
+                            if len(_recent_preds) > KEY3_WINDOW_FRAMES:
+                                _recent_preds.pop(0)
+                            key3_pos_count = sum(_recent_preds)
+                            if t1 is not None and (t1 + timedelta(seconds=KEY_SEQUENCE_TIME) >= datetime.now()):
+                                if key3_pos_count >= KEY3_REQUIRED_IN_WINDOW:
+                                    KEY_3 = True
+                                    SHIELDS = True
+                                    _recent_preds = []
+                            else:
+                                KEY_1 = False
                                 _recent_preds = []
                         else:
-                            KEY_1 = False
                             _recent_preds = []
+                    # AUTO MODE: Automatically activate shields when ANY hands are detected
                     else:
-                        _recent_preds = []
+                        SHIELDS = True
             else:
+                # No hands detected - deactivate shields
+                if not args.gesture_mode:
+                    SHIELDS = False
                 _recent_preds = []
 
-            bar_w = 360
-            bar_h = 24
-            bar_x = 30
-            bar_y = height - 60
-            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (180,180,180), 2)
-            
-            if KEY_1:
-                positive = sum(_recent_preds)
-                denom = max(1, KEY3_WINDOW_FRAMES)
-                fill = int((positive / denom) * (bar_w - 4))
-                cv2.rectangle(frame, (bar_x+2, bar_y+2), (bar_x+2+fill, bar_y+bar_h-2), (0,200,80), -1)
-                cv2.putText(frame, "Waiting for step 2...", (bar_x, bar_y - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 1, cv2.LINE_AA)
-            else:
-                cv2.putText(frame, "Step 1: Raise both hands", (bar_x, bar_y - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 1, cv2.LINE_AA)
+            # -------------------- Auto-Switch Logic (Activity Based) --------------------
+            if AUTO_SWITCH_ENABLED and effects_files:
+                if SHIELDS:
+                    if shield_active_start_time is None:
+                        shield_active_start_time = time.time()
+                    
+                    # Determine duration for current effect
+                    current_duration = get_effect_duration(shield_loaded_name)
+                    
+                    elapsed_active = time.time() - shield_active_start_time
+                    seconds_left = max(0, current_duration - elapsed_active)
+                    
+                    # Draw countdown
+                    frame = draw_countdown_headline(frame, seconds_left, current_duration)
+                    
+                    # Switch Effect
+                    if elapsed_active >= current_duration:
+                        selected_index = (selected_index + 1) % len(effects_files)
+                        shield_loaded_name = effects_files[selected_index]
+                        start_loader_for_filename(shield_loaded_name)
+                        shield_active_start_time = time.time() # Reset timer for next cycle
+                        print(f"\n🔄 Auto-switching to: {shield_loaded_name}")
+                else:
+                    # Reset timer when shield is not active
+                    shield_active_start_time = None
 
-            bx1, by1 = button_tl
-            bx2, by2 = button_br
-            cv2.rectangle(frame, (bx1, by1), (bx2, by2), button_color_bg, -1)
-            cv2.rectangle(frame, (bx1, by1), (bx2, by2), (120,120,120), 2)
-            btn_text = "TOGGLE SHIELDS (STAFF)"
-            cv2.putText(frame, btn_text, (bx1 + 12, by1 + BUTTON_H // 2 + 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, button_color_fg, 2, cv2.LINE_AA)
 
-            sx1, sy1 = select_btn_tl
-            sx2, sy2 = select_btn_br
-            cv2.rectangle(frame, (sx1, sy1), (sx2, sy2), select_btn_color_bg, -1)
-            cv2.rectangle(frame, (sx1, sy1), (sx2, sy2), (140,140,160), 2)
-            txt_x = sx1 + 12
-            txt_y = sy1 + SELECT_BTN_H//2 + 8
-            cv2.putText(frame, select_btn_label, (txt_x, txt_y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, select_btn_color_fg, 2, cv2.LINE_AA)
 
-            if menu_open:
-                menu_x = sx1
-                menu_y = sy2 + 8
-                padding = 6
-                item_h = 36
-                max_display = min(12, max(1, len(effects_files)))
-                menu_w = SELECT_BTN_W
-                menu_h = padding + item_h * max_display + padding
-                cv2.rectangle(frame, (menu_x, menu_y), (menu_x + menu_w, menu_y + menu_h), (30,30,40), -1)
-                cv2.rectangle(frame, (menu_x, menu_y), (menu_x + menu_w, menu_y + menu_h), (120,120,140), 2)
-                
-                for i in range(max_display):
-                    y0 = menu_y + padding + i * item_h
-                    y1 = y0 + item_h
-                    if i < len(effects_files):
-                        fname = effects_files[i]
-                        color_text = (200,200,200)
-                        if fname == shield_loaded_name:
-                            cv2.rectangle(frame, (menu_x + 4, y0 + 4), (menu_x + menu_w - 4, y1 - 4), (60,60,80), -1)
-                            color_text = (255,230,120)
-                        cv2.putText(frame, fname, (menu_x + 8, y0 + item_h//2 + 6),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_text, 1, cv2.LINE_AA)
+
+
+
 
             if KEY_1 or (key1_display_until and datetime.now() < key1_display_until):
                 if key1_last_pos:
