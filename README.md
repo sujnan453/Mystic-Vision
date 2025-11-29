@@ -1,7 +1,7 @@
 
-# 🛡️ Dr. Strange Shields – Gesture Magic in Action
+# 🔮 Mystic Vision – Gesture Magic in Action
 
-**Dr. Strange Shields** is a real-time hand-tracking and gesture-recognition project that lets you cast magical shields using your webcam. The code uses Python, OpenCV, and MediaPipe to detect up to 6 hands, recognize specific gesture sequences with an SVM model, and overlay animated shield effects on your video feed.
+**Mystic Vision** (formerly Dr. Strange Shields) is a real-time hand-tracking and gesture-recognition project that lets you cast magical shields using your webcam. The code uses Python, OpenCV, and MediaPipe to detect up to 6 hands, recognize specific gesture sequences with an SVM model, and overlay animated shield effects on your video feed.
 
 ## What the Code Does
 
@@ -19,7 +19,7 @@
 	```
 2. **Run the main script:**
 	```bash
-	python shield.py --camera 0 --ML_model models/model_svm.sav
+	python main.py --camera 0 --ML_model models/model_svm.sav
 	```
 	- Use `--camera` to select your webcam index (default is 0).
 	- Use `--output_mode` to choose between `window`, `virtual`, or `both`.

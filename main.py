@@ -26,7 +26,7 @@ from utils import points_detection_hands
 from config import config
 
 # -------------------- Argument Parsing --------------------
-parser = ArgumentParser(description="Dr. Strange Shields - Exhibition Mode")
+parser = ArgumentParser(description="Mystic Vision - Exhibition Mode")
 parser.add_argument('--camera', type=int, default=config.CAMERA_ID, help=f'Camera index (default: {config.CAMERA_ID})')
 parser.add_argument('--ML_model', type=str, default=config.MODEL_PATH, help='Path to ML model file')
 parser.add_argument('--shield_video', type=str, default='effects/Eldritch Mandala.mp4', help='Path to shield video or effect')
@@ -269,13 +269,13 @@ def on_brightness_change(val):
 update_init_status("Preparing display...", 95)
 
 if show_window:
-    cv2.namedWindow("Dr. Strange shields", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Mystic Vision", cv2.WINDOW_NORMAL)
     if args.start_fullscreen or config.FULLSCREEN:
-        cv2.setWindowProperty("Dr. Strange shields", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        cv2.setWindowProperty("Mystic Vision", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     else:
-        cv2.setWindowProperty("Dr. Strange shields", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty("Mystic Vision", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
         try:
-            cv2.resizeWindow("Dr. Strange shields", width, height)
+            cv2.resizeWindow("Mystic Vision", width, height)
         except Exception:
             pass
     
@@ -286,7 +286,7 @@ if show_window:
             current_progress = init_status["progress"]
         
         loading_frame = ui.create_loading_screen(width, height, current_step, current_progress)
-        cv2.imshow("Dr. Strange shields", loading_frame)
+        cv2.imshow("Mystic Vision", loading_frame)
         
         if cv2.waitKey(30) & 0xFF == ord('q'):
             state.stop_threads = True
@@ -322,8 +322,8 @@ with mp_hands.Hands(
         cam = None
 
     if show_window:
-        cv2.setMouseCallback("Dr. Strange shields", on_mouse)
-        cv2.createTrackbar('Brightness', 'Dr. Strange shields', brightness_boost, 100, on_brightness_change)
+        cv2.setMouseCallback("Mystic Vision", on_mouse)
+        cv2.createTrackbar('Brightness', 'Mystic Vision', brightness_boost, 100, on_brightness_change)
 
     try:
         while camera_thread.running and not state.stop_threads:
@@ -573,16 +573,16 @@ with mp_hands.Hands(
                     elif key == ord('g'):
                         SHIELDS = not SHIELDS
                     elif key == ord('f'):
-                        cv2.setWindowProperty("Dr. Strange shields", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                        cv2.setWindowProperty("Mystic Vision", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                     elif key == ord('r'):
-                        cv2.setWindowProperty("Dr. Strange shields", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                        cv2.setWindowProperty("Mystic Vision", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
                     elif key == ord('m'):
                         try:
-                            cv2.resizeWindow("Dr. Strange shields", 200, 120)
+                            cv2.resizeWindow("Mystic Vision", 200, 120)
                         except Exception:
                             pass
                     elif key == ord('M'):
-                        cv2.setWindowProperty("Dr. Strange shields", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                        cv2.setWindowProperty("Mystic Vision", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                     elif key == ord('x') or key == ord('q'):
                         break
 

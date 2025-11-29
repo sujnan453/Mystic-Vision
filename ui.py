@@ -27,7 +27,7 @@ def create_loading_screen(width, height, step, progress):
                    (np.random.randint(100, 255),)*3, -1)
     
     # Title
-    title, font = "DR. STRANGE SHIELDS", cv2.FONT_HERSHEY_SIMPLEX
+    title, font = "MYSTIC VISION", cv2.FONT_HERSHEY_SIMPLEX
     (tw, th), _ = cv2.getTextSize(title, font, 2.0, 4)
     tx, ty = (width - tw) // 2, height // 3
     cv2.putText(screen, title, (tx + 3, ty + 3), font, 2.0, (0, 0, 0), 6, cv2.LINE_AA)
