@@ -72,6 +72,13 @@ EFFECT_CYCLE_DURATION = 5   # Switch every 5 seconds of activity
 COUNTDOWN_DURATION = 5      # Show countdown for full duration
 shield_active_start_time = None
 
+# Animation Name Display
+effect_name_opacity = 0.0
+last_effect_switch_time = None
+EFFECT_NAME_FADE_IN_DURATION = 0.5  # seconds
+EFFECT_NAME_DISPLAY_DURATION = 3.0  # seconds
+EFFECT_NAME_FADE_OUT_DURATION = 0.5  # seconds
+
 
 def signal_handler(sig, frame):
     global stop_threads
@@ -108,7 +115,7 @@ signal.signal(signal.SIGINT, signal_handler)
 parser = ArgumentParser(description="Dr. Strange Shields - Exhibition Mode")
 parser.add_argument('--camera', type=int, default=0, help='Camera index (default: 0)')
 parser.add_argument('--ML_model', type=str, default='model_svm.sav', help='Path to ML model file')
-parser.add_argument('--shield_video', type=str, default='effects/mandala.mp4', help='Path to shield video or effect')
+parser.add_argument('--shield_video', type=str, default='effects/Eldritch Mandala.mp4', help='Path to shield video or effect')
 parser.add_argument('--output_mode', type=str, default='window', choices=['window', 'virtual', 'both'], help='Output mode: window, virtual, or both')
 parser.add_argument('--demo_mode', action='store_true', help='Enable demo mode (easier for kids)')
 parser.add_argument('--mirror', action='store_false', help='Do not mirror camera image (default: no mirror)')
@@ -362,9 +369,9 @@ def draw_help_overlay(frame):
 
 
 def get_effect_duration(filename):
-    """Return the duration for a specific effect file - ALL 8 seconds"""
-    # All effects now have 8 second duration
-    return 8
+    """Return the duration for a specific effect file - ALL 5 seconds"""
+    # All effects now have 5 second duration
+    return 5
 
 
 def draw_countdown_headline(frame, seconds_left, total_duration=5):
@@ -474,6 +481,123 @@ def draw_countdown_headline(frame, seconds_left, total_duration=5):
     border_color = (80, 80, 100)
     cv2.rectangle(frame, (margin_x, y), (margin_x + bar_w, y + bar_h), 
                  border_color, 1, cv2.LINE_AA)
+    
+    return frame
+
+
+def draw_effect_name(frame, effect_name, opacity=1.0):
+    """Draw the current effect name with glassmorphism UI"""
+    if not effect_name or opacity <= 0:
+        return frame
+    
+    h, w = frame.shape[:2]
+    
+    # Remove file extension and clean up name
+    display_name = effect_name.replace('.mp4', '').replace('.webm', '').replace('.mkv', '')
+    
+    # Add emoji based on effect type
+    emoji_map = {
+        'nano': '⚡',
+        'eldritch': '🔮',
+        'chaos': '💫',
+        'cosmic': '✨',
+        'time': '⏰',
+        'fel': '🔥',
+        'mystic': '🌀',
+        'arcane': '💠'
+    }
+    
+    emoji = '🛡️'  # default
+    for key, em in emoji_map.items():
+        if key in display_name.lower():
+            emoji = em
+            break
+    
+    display_text = f"{emoji}  {display_name.upper()}"
+    
+    # Font settings
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.0
+    thickness = 2
+    
+    # Get text size
+    (text_w, text_h), baseline = cv2.getTextSize(display_text, font, font_scale, thickness)
+    
+    # Position: bottom-left corner with padding
+    padding_x = 30
+    padding_y = 30
+    box_padding = 20
+    
+    box_x = padding_x
+    box_y = h - padding_y - text_h - box_padding * 2
+    box_w = text_w + box_padding * 2
+    box_h = text_h + box_padding * 2
+    
+    # Create overlay for transparency
+    overlay = frame.copy()
+    
+    # Draw glassmorphism background
+    # Dark semi-transparent background
+    bg_color = (20, 20, 30)
+    cv2.rectangle(overlay, (box_x, box_y), (box_x + box_w, box_y + box_h), bg_color, -1)
+    
+    # Apply transparency based on opacity
+    alpha = 0.85 * opacity
+    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    
+    # Animated gradient border
+    t = time.time()
+    border_thickness = 3
+    
+    # Create gradient effect with multiple colors
+    for i in range(border_thickness):
+        # Animate color shift
+        hue_shift = (t * 50) % 360
+        
+        # Calculate color based on position and time
+        r_val = int(128 + 127 * np.sin(np.radians(hue_shift)))
+        g_val = int(128 + 127 * np.sin(np.radians(hue_shift + 120)))
+        b_val = int(128 + 127 * np.sin(np.radians(hue_shift + 240)))
+        
+        border_color = (b_val, g_val, r_val)
+        border_alpha = opacity * (1.0 - i / border_thickness)
+        
+        border_overlay = frame.copy()
+        cv2.rectangle(border_overlay, 
+                     (box_x - i, box_y - i), 
+                     (box_x + box_w + i, box_y + box_h + i), 
+                     border_color, 2)
+        cv2.addWeighted(border_overlay, border_alpha, frame, 1 - border_alpha, 0, frame)
+    
+    # Add glow effect
+    glow_overlay = frame.copy()
+    glow_size = 8
+    glow_color = (255, 200, 100)
+    cv2.rectangle(glow_overlay, 
+                 (box_x - glow_size, box_y - glow_size), 
+                 (box_x + box_w + glow_size, box_y + box_h + glow_size), 
+                 glow_color, -1)
+    cv2.addWeighted(glow_overlay, 0.1 * opacity, frame, 1 - 0.1 * opacity, 0, frame)
+    
+    # Draw text with shadow
+    text_x = box_x + box_padding
+    text_y = box_y + box_padding + text_h
+    
+    # Shadow
+    shadow_offset = 3
+    shadow_color = (0, 0, 0)
+    shadow_overlay = frame.copy()
+    cv2.putText(shadow_overlay, display_text, 
+               (text_x + shadow_offset, text_y + shadow_offset), 
+               font, font_scale, shadow_color, thickness + 1, cv2.LINE_AA)
+    cv2.addWeighted(shadow_overlay, 0.6 * opacity, frame, 1 - 0.6 * opacity, 0, frame)
+    
+    # Main text with gradient
+    text_color = (255, 220, 150)  # Golden color
+    text_overlay = frame.copy()
+    cv2.putText(text_overlay, display_text, (text_x, text_y), 
+               font, font_scale, text_color, thickness, cv2.LINE_AA)
+    cv2.addWeighted(text_overlay, opacity, frame, 1 - opacity, 0, frame)
     
     return frame
 
@@ -707,12 +831,15 @@ else:
 
 # -------------------- OPTIMIZED ShieldLoader --------------------
 class ShieldLoader:
-    """Enhanced loader with better buffering and performance"""
-    def __init__(self, path, buffer_seconds=3.0, min_fps=15, max_frames=300):
+    """Enhanced loader with better buffering, resizing, and speed control"""
+    def __init__(self, path, buffer_seconds=3.0, min_fps=15, max_frames=300, resize_max_width=None, speed_factor=1.0):
         self.path = path
         self.buffer_seconds = float(buffer_seconds)
         self.min_fps = min_fps
         self.max_frames = int(max_frames)
+        self.resize_max_width = resize_max_width
+        self.speed_factor = float(speed_factor)
+        
         self.cap = None
         self.buffer = deque()
         self.lock = threading.Lock()
@@ -737,8 +864,23 @@ class ShieldLoader:
             
             fps = self.cap.get(cv2.CAP_PROP_FPS) or 25.0
             self.fps = max(self.min_fps, int(round(fps)))
-            self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or width
-            self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or height
+            
+            # Calculate frame skip for speed control
+            # If speed_factor is 2.0, we want to play 2x faster, so we skip every other frame (effectively)
+            # Or better: we read every frame but only add 1 out of N to buffer? 
+            # Actually, to play faster we should just increment the frame pointer faster or drop frames.
+            # Simple approach: Read all, but only keep frames based on speed_factor.
+            
+            w_orig = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h_orig = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            if self.resize_max_width and w_orig > self.resize_max_width:
+                scale = self.resize_max_width / w_orig
+                self.w = int(w_orig * scale)
+                self.h = int(h_orig * scale)
+            else:
+                self.w = w_orig
+                self.h = h_orig
             
             target = int(self.buffer_seconds * self.fps)
             target = max(10, min(target, self.max_frames))
@@ -779,33 +921,25 @@ class ShieldLoader:
     def _run(self):
         try:
             filled = 0
-            while self.running and filled < self.target_initial:
-                ret, f = self.cap.read()
-                if not ret or f is None:
-                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    continue
-                f = np.ascontiguousarray(f)
-                with self.lock:
-                    self.buffer.append(f)
-                    self.last_frame = f
-                    if len(self.buffer) > self.max_frames:
-                        self.buffer.popleft()
-                filled += 1
-            
-            self.ready = True
+            frame_accumulator = 0.0
             
             while self.running:
+                # Pre-fill check
                 with self.lock:
                     buflen = len(self.buffer)
                 
-                if buflen >= self.target_maintain:
-                    time.sleep(0.02)
+                if self.ready:
+                    if buflen >= self.target_maintain:
+                        time.sleep(0.02)
+                        continue
+                    elif buflen > self.target_initial:
+                        time.sleep(0.005)
+                    else:
+                        time.sleep(0.001)
+                elif filled >= self.target_initial:
+                    self.ready = True
                     continue
-                elif buflen > self.target_initial:
-                    time.sleep(0.005)
-                else:
-                    time.sleep(0.001)
-                
+
                 ret, f = self.cap.read()
                 if not ret or f is None:
                     try:
@@ -814,12 +948,36 @@ class ShieldLoader:
                         pass
                     continue
                 
+                # Speed control logic
+                frame_accumulator += self.speed_factor
+                if frame_accumulator < 1.0:
+                    continue
+                
+                # If we need to process this frame
+                frame_accumulator -= 1.0
+                
+                # While loop to skip extra frames if speed_factor > 2.0 etc
+                while frame_accumulator >= 1.0:
+                    ret, _ = self.cap.read() # Skip frame
+                    if not ret:
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    frame_accumulator -= 1.0
+
+                # Resize if needed
+                if self.resize_max_width and f.shape[1] > self.resize_max_width:
+                    try:
+                        f = cv2.resize(f, (self.w, self.h), interpolation=cv2.INTER_AREA)
+                    except Exception:
+                        pass
+
                 f = np.ascontiguousarray(f)
                 with self.lock:
                     self.buffer.append(f)
                     self.last_frame = f
                     if len(self.buffer) > self.max_frames:
                         self.buffer.popleft()
+                
+                filled += 1
                         
         except Exception:
             self.ready = False
@@ -851,7 +1009,18 @@ def start_loader_for_filename(name):
         if not shield_loaders[name].running:
             shield_loaders[name].start()
         return shield_loaders[name]
-    loader = ShieldLoader(fp, buffer_seconds=DEFAULT_PREBUFFER_SECONDS, max_frames=MAX_FRAMES_PER_LOADER)
+    
+    # Custom settings for specific files
+    speed = 1.0
+    if "nano" in name.lower():
+        speed = 1.5  # Play Nano Tech Shield 50% faster
+        print(f"🚀 Boosting speed for {name}")
+        
+    loader = ShieldLoader(fp, 
+                          buffer_seconds=DEFAULT_PREBUFFER_SECONDS, 
+                          max_frames=MAX_FRAMES_PER_LOADER,
+                          resize_max_width=640, # Resize to 640px width for performance
+                          speed_factor=speed)
     shield_loaders[name] = loader
     loader.start()
     return loader
@@ -1407,6 +1576,7 @@ with mp_hands.Hands(
                         shield_loaded_name = effects_files[selected_index]
                         start_loader_for_filename(shield_loaded_name)
                         shield_active_start_time = time.time() # Reset timer for next cycle
+                        last_effect_switch_time = time.time()  # Track switch time for fade animation
                         print(f"\n🔄 Auto-switching to: {shield_loaded_name}")
                 else:
                     # Reset timer when shield is not active
@@ -1486,6 +1656,33 @@ with mp_hands.Hands(
             # Help overlay (toggle with H key)
             if show_help_overlay:
                 draw_help_overlay(frame)
+            
+            # -------------------- Effect Name Display with Fade Animation --------------------
+            if SHIELDS and shield_loaded_name:
+                # Calculate opacity based on time since last switch
+                current_time = time.time()
+                
+                if last_effect_switch_time is None:
+                    last_effect_switch_time = current_time
+                
+                time_since_switch = current_time - last_effect_switch_time
+                
+                # Fade in phase
+                if time_since_switch < EFFECT_NAME_FADE_IN_DURATION:
+                    effect_name_opacity = time_since_switch / EFFECT_NAME_FADE_IN_DURATION
+                # Display phase
+                elif time_since_switch < (EFFECT_NAME_FADE_IN_DURATION + EFFECT_NAME_DISPLAY_DURATION):
+                    effect_name_opacity = 1.0
+                # Fade out phase
+                elif time_since_switch < (EFFECT_NAME_FADE_IN_DURATION + EFFECT_NAME_DISPLAY_DURATION + EFFECT_NAME_FADE_OUT_DURATION):
+                    fade_out_progress = (time_since_switch - EFFECT_NAME_FADE_IN_DURATION - EFFECT_NAME_DISPLAY_DURATION) / EFFECT_NAME_FADE_OUT_DURATION
+                    effect_name_opacity = 1.0 - fade_out_progress
+                else:
+                    effect_name_opacity = 0.0
+                
+                # Draw the effect name with current opacity
+                if effect_name_opacity > 0:
+                    frame = draw_effect_name(frame, shield_loaded_name, effect_name_opacity)
             
             # Auto-reset logic: track activity
             if xMinL or xMinR:
