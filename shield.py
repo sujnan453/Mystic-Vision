@@ -375,112 +375,252 @@ def get_effect_duration(filename):
 
 
 def draw_countdown_headline(frame, seconds_left, total_duration=5):
-    """Draw a smooth, aesthetic countdown with clean design"""
+    """Draw a mystical magic circle with futuristic HUD elements - Dr. Strange style"""
     h, w = frame.shape[:2]
     
     # Calculate progress and smooth animations
     progress = (total_duration - seconds_left) / total_duration
     t = time.time()
     
-    # Sleek bar dimensions
-    bar_h = 70
+    # HUD-style dimensions
+    bar_h = 90
     y = 10
-    margin_x = int(w * 0.15)  # 15% margin on each side
+    margin_x = int(w * 0.15)
     bar_w = w - (margin_x * 2)
     
-    # Smooth pulsing effect
-    pulse = (np.sin(t * 2) + 1) / 2 * 0.3 + 0.7  # Range: 0.7 to 1.0
+    # Multiple animation speeds
+    pulse = (np.sin(t * 2) + 1) / 2 * 0.3 + 0.7
+    rotation = (t * 30) % 360  # Slow rotation for magic circles
+    fast_rotation = (t * 60) % 360  # Faster rotation
     
-    # Create semi-transparent background with subtle gradient
-    overlay = frame.copy()
+    # === LAYER 1: Mystical Background ===
+    bg_overlay = frame.copy()
     
-    # Gradient from dark to slightly lighter
+    # Dark mystical gradient
     for i in range(bar_h):
-        alpha_gradient = 0.85 - (i / bar_h) * 0.2
-        gray_val = int(15 + (i / bar_h) * 10)
-        cv2.line(overlay, (margin_x, y + i), (margin_x + bar_w, y + i), 
-                (gray_val, gray_val, gray_val), 1)
+        ratio = i / bar_h
+        # Deep purple to dark blue gradient
+        r_val = int(15 + ratio * 10)
+        g_val = int(10 + ratio * 8)
+        b_val = int(25 + ratio * 15)
+        cv2.line(bg_overlay, (margin_x, y + i), (margin_x + bar_w, y + i), 
+                (b_val, g_val, r_val), 1)
     
-    cv2.addWeighted(overlay, 0.9, frame, 0.1, 0, frame)
+    cv2.addWeighted(bg_overlay, 0.9, frame, 0.1, 0, frame)
     
-    # Smooth progress bar with gradient
+    # === LAYER 2: Rotating Magic Circles ===
+    circle_overlay = frame.copy()
+    center_x = margin_x + bar_w // 2
+    center_y = y + bar_h // 2
+    
+    # Outer magic circle with runes
+    outer_radius = 35
+    for i in range(12):  # 12 segments like a clock
+        angle = rotation + i * 30
+        angle_rad = np.radians(angle)
+        
+        # Draw small circles as "runes"
+        rune_x = int(center_x + outer_radius * np.cos(angle_rad))
+        rune_y = int(center_y + outer_radius * np.sin(angle_rad))
+        
+        # Color based on urgency
+        if seconds_left <= 3:
+            rune_color = (100, 120, 255)  # Red mystical
+        elif seconds_left <= 5:
+            rune_color = (200, 140, 255)  # Purple mystical
+        else:
+            rune_color = (255, 180, 100)  # Cyan mystical
+        
+        cv2.circle(circle_overlay, (rune_x, rune_y), 3, rune_color, -1, cv2.LINE_AA)
+    
+    # Inner rotating circle (counter-rotation)
+    inner_radius = 22
+    for i in range(8):
+        angle = -fast_rotation + i * 45
+        angle_rad = np.radians(angle)
+        
+        x1 = int(center_x + inner_radius * np.cos(angle_rad))
+        y1 = int(center_y + inner_radius * np.sin(angle_rad))
+        x2 = int(center_x + (inner_radius - 8) * np.cos(angle_rad))
+        y2 = int(center_y + (inner_radius - 8) * np.sin(angle_rad))
+        
+        if seconds_left <= 3:
+            line_color = (120, 140, 255)
+        elif seconds_left <= 5:
+            line_color = (220, 160, 255)
+        else:
+            line_color = (255, 200, 120)
+        
+        cv2.line(circle_overlay, (x1, y1), (x2, y2), line_color, 2, cv2.LINE_AA)
+    
+    cv2.addWeighted(circle_overlay, 0.5 * pulse, frame, 0.5, 0, frame)
+    
+    # === LAYER 3: Hexagonal HUD Elements ===
+    hex_overlay = frame.copy()
+    
+    # Left hexagon
+    hex_size = 12
+    left_hex_x = margin_x + 30
+    left_hex_y = y + bar_h // 2
+    
+    # Right hexagon
+    right_hex_x = margin_x + bar_w - 30
+    right_hex_y = y + bar_h // 2
+    
+    for hex_x, hex_y in [(left_hex_x, left_hex_y), (right_hex_x, right_hex_y)]:
+        hex_points = []
+        for i in range(6):
+            angle = rotation + i * 60
+            angle_rad = np.radians(angle)
+            px = int(hex_x + hex_size * np.cos(angle_rad))
+            py = int(hex_y + hex_size * np.sin(angle_rad))
+            hex_points.append([px, py])
+        
+        hex_points = np.array(hex_points, np.int32)
+        cv2.polylines(hex_overlay, [hex_points], True, (150, 150, 200), 2, cv2.LINE_AA)
+    
+    cv2.addWeighted(hex_overlay, 0.4, frame, 0.6, 0, frame)
+    
+    # === LAYER 4: Futuristic Progress Bar ===
+    progress_h = 6
+    progress_y = y + bar_h - 18
     progress_w = int(bar_w * progress)
-    progress_h = 4
-    progress_y = y + bar_h - 15
     
     if progress_w > 0:
-        # Create gradient progress bar
-        for i in range(progress_w):
-            ratio = i / max(1, progress_w)
-            
-            # Smooth color transition: Cyan → Blue → Purple
-            if ratio < 0.5:
-                # Cyan to Blue
-                r_val = int(255 * (ratio * 2))
-                g_val = int(255 * (1 - ratio))
-                b_val = 255
-            else:
-                # Blue to Purple
-                r_val = int(255 * (0.5 + (ratio - 0.5)))
-                g_val = int(128 * (1 - (ratio - 0.5) * 2))
-                b_val = 255
-            
-            # Apply pulse
-            r_val = int(r_val * pulse)
-            g_val = int(g_val * pulse)
-            b_val = int(b_val * pulse)
-            
-            cv2.line(frame, (margin_x + i, progress_y), 
-                    (margin_x + i, progress_y + progress_h), 
-                    (b_val, g_val, r_val), 1)
+        # HUD-style segmented progress bar
+        segment_count = 40
+        segment_width = bar_w / segment_count
         
-        # Subtle glow on progress bar
-        glow = frame.copy()
-        cv2.line(glow, (margin_x, progress_y + progress_h // 2), 
-                (margin_x + progress_w, progress_y + progress_h // 2), 
-                (255, 255, 255), 2)
-        cv2.addWeighted(glow, 0.15, frame, 0.85, 0, frame)
+        for i in range(segment_count):
+            seg_x = margin_x + int(i * segment_width)
+            seg_w = int(segment_width - 2)
+            
+            if seg_x + seg_w <= margin_x + progress_w:
+                # Filled segment
+                ratio = i / segment_count
+                
+                # Gradient color
+                if seconds_left <= 3:
+                    color = (100 + int(ratio * 50), 120 + int(ratio * 30), 255)
+                elif seconds_left <= 5:
+                    color = (200 + int(ratio * 40), 140 + int(ratio * 40), 255)
+                else:
+                    color = (255, 180 + int(ratio * 40), 100 + int(ratio * 50))
+                
+                cv2.rectangle(frame, (seg_x, progress_y), 
+                            (seg_x + seg_w, progress_y + progress_h), 
+                            color, -1, cv2.LINE_AA)
+        
+        # Glow at progress tip
+        glow_overlay = frame.copy()
+        tip_x = margin_x + progress_w
+        cv2.circle(glow_overlay, (tip_x, progress_y + progress_h // 2), 8, 
+                  (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.addWeighted(glow_overlay, 0.2 * pulse, frame, 0.8, 0, frame)
     
-    # Clean, elegant text
+    # === LAYER 5: Mystical Text with Glow ===
     text = f"NEXT SPELL: {int(seconds_left)}s"
     font = cv2.FONT_HERSHEY_SIMPLEX
     
-    # Subtle scale animation
+    # Pulsing scale for urgency
     if seconds_left <= 3:
-        scale_pulse = (np.sin(t * 6) + 1) / 2 * 0.15 + 0.85
+        scale_pulse = (np.sin(t * 5) + 1) / 2 * 0.12 + 0.88
         scale = 0.9 * scale_pulse
-        thick = 2
     else:
-        scale = 0.75
-        thick = 2
+        scale = 0.8
+    
+    thick = 2
     
     (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
     tx = margin_x + (bar_w - tw) // 2
-    ty = y + 35
+    ty = y + 38
     
-    # Smooth color transitions
+    # Mystical color palette
     if seconds_left <= 3:
-        # Urgent: Soft red
-        text_color = (100, 100, 255)
+        text_color = (130, 150, 255)  # Mystical red
+        glow_color = (180, 200, 255)
     elif seconds_left <= 5:
-        # Warning: Soft purple
-        text_color = (200, 150, 255)
+        text_color = (220, 160, 255)  # Mystical purple
+        glow_color = (255, 200, 255)
     else:
-        # Normal: Soft cyan
-        text_color = (255, 200, 150)
+        text_color = (255, 200, 140)  # Mystical cyan-gold
+        glow_color = (255, 230, 180)
     
-    # Subtle text shadow for depth
-    shadow_offset = 2
-    cv2.putText(frame, text, (tx + shadow_offset, ty + shadow_offset), 
-               font, scale, (0, 0, 0), thick, cv2.LINE_AA)
+    # Layered shadow for depth
+    for offset in [4, 3, 2]:
+        shadow_overlay = frame.copy()
+        shadow_alpha = 0.3 - offset * 0.05
+        cv2.putText(shadow_overlay, text, (tx + offset, ty + offset), 
+                   font, scale, (0, 0, 0), thick, cv2.LINE_AA)
+        cv2.addWeighted(shadow_overlay, shadow_alpha, frame, 1 - shadow_alpha, 0, frame)
+    
+    # Mystical glow
+    for glow_thick in [6, 4]:
+        glow_overlay = frame.copy()
+        cv2.putText(glow_overlay, text, (tx, ty), 
+                   font, scale, glow_color, glow_thick, cv2.LINE_AA)
+        cv2.addWeighted(glow_overlay, 0.1 * pulse, frame, 1 - 0.1 * pulse, 0, frame)
     
     # Main text
     cv2.putText(frame, text, (tx, ty), font, scale, text_color, thick, cv2.LINE_AA)
     
-    # Minimalist border
-    border_color = (80, 80, 100)
-    cv2.rectangle(frame, (margin_x, y), (margin_x + bar_w, y + bar_h), 
-                 border_color, 1, cv2.LINE_AA)
+    # === LAYER 6: HUD Border with Scan Lines ===
+    border_overlay = frame.copy()
+    
+    # Main border
+    if seconds_left <= 3:
+        border_color = (120, 140, 255)
+    elif seconds_left <= 5:
+        border_color = (200, 160, 255)
+    else:
+        border_color = (255, 180, 120)
+    
+    cv2.rectangle(border_overlay, (margin_x, y), (margin_x + bar_w, y + bar_h), 
+                 border_color, 2, cv2.LINE_AA)
+    cv2.addWeighted(border_overlay, 0.6 * pulse, frame, 0.4, 0, frame)
+    
+    # Corner brackets (HUD style)
+    corner_size = 15
+    corner_thick = 3
+    corners = [
+        (margin_x, y),
+        (margin_x + bar_w, y),
+        (margin_x, y + bar_h),
+        (margin_x + bar_w, y + bar_h)
+    ]
+    
+    bracket_overlay = frame.copy()
+    for idx, (corner_x, corner_y) in enumerate(corners):
+        # Determine bracket direction
+        if idx == 0:  # Top-left
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x + corner_size, corner_y), 
+                    border_color, corner_thick, cv2.LINE_AA)
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x, corner_y + corner_size), 
+                    border_color, corner_thick, cv2.LINE_AA)
+        elif idx == 1:  # Top-right
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x - corner_size, corner_y), 
+                    border_color, corner_thick, cv2.LINE_AA)
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x, corner_y + corner_size), 
+                    border_color, corner_thick, cv2.LINE_AA)
+        elif idx == 2:  # Bottom-left
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x + corner_size, corner_y), 
+                    border_color, corner_thick, cv2.LINE_AA)
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x, corner_y - corner_size), 
+                    border_color, corner_thick, cv2.LINE_AA)
+        else:  # Bottom-right
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x - corner_size, corner_y), 
+                    border_color, corner_thick, cv2.LINE_AA)
+            cv2.line(bracket_overlay, (corner_x, corner_y), (corner_x, corner_y - corner_size), 
+                    border_color, corner_thick, cv2.LINE_AA)
+    
+    cv2.addWeighted(bracket_overlay, 0.7, frame, 0.3, 0, frame)
+    
+    # Scan line effect
+    scan_y = int(y + ((t * 40) % bar_h))
+    scan_overlay = frame.copy()
+    cv2.line(scan_overlay, (margin_x, scan_y), (margin_x + bar_w, scan_y), 
+            (200, 200, 255), 1, cv2.LINE_AA)
+    cv2.addWeighted(scan_overlay, 0.15, frame, 0.85, 0, frame)
     
     return frame
 
